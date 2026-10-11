@@ -21,6 +21,7 @@ tests/
   fixtures/          golden.json / deep.json / vmcap.json / dfp.json
 examples/
   login_flow.py / login_via_yyb.py / probe_login.py / business_api.py
+  probe_all_apis.py     全量业务接口探测 (60 个前端函数, 支持 prod/staging 域)
   diagnose_account.py   账号诊断 (YYB 会话 rt/at/scope + 美团 appid 铸码能力)
 docs/
   接口文档.md / 算法原理.md

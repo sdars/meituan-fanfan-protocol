@@ -149,6 +149,83 @@ FRONTEND_FN = {
 # 使用 GET 的接口
 GET_APIS = {"queryDynamicRule", "getSubscribeTemplateIds", "getWxpDecode", "fetchHeatmapTaps"}
 
+# 每个前端函数的默认请求参数 (api/index.js 里固定的部分)。
+# 用于无需业务上下文的探测 / 个例。
+DEFAULT_PARAMS = {
+    "getStructConfig": {"actId": "1"},
+    "fetchPoiList": {"recallBizId": "cpsPromotionOrderMulti", "pageNo": 1, "pageSize": 10},
+    "fetchDaoZongList": {"recallBizId": "cpsDaoZongWxProduct", "pageNo": 1, "pageSize": 10},
+    "queryCpsSharePoi": {"recallBizId": "cpsSelfPromotionSinglePoi", "pageNo": 1},
+    "guide": {"eventIdList": []},
+    "signUpTask": {},
+    "cancelMission": {"userMissionSecretId": "1"},
+    "missionList": {},
+    "searchList": {"biz": "SHANG_JIN_SEARCH", "count": 10},
+    "searchSave": {"biz": "SHANG_JIN_SEARCH", "searchKey": "x", "ext": "{}"},
+    "searchClear": {"biz": "SHANG_JIN_SEARCH"},
+    "cashBack": {},
+    "unlogPoolInfo": {},
+    "waitComment": {},
+    "completeComment": {},
+    "getCommentDetail": {"orderViewId": "1"},
+    "activityList": {"queryModel": {}},
+    "queryShare": {"teamId": "1"},
+    "joinShare": {"teamId": "1"},
+    "openShare": {"activityId": "1", "userId": "1"},
+    "signIn": {"day": 1, "missionSecretId": "1"},
+    "pointsBalance": {},
+    "shareList": {},
+    "withdrawList": {},
+    "walletDeduct": {"openId": None},
+    "queryWalletBalance": {},
+    "queryPointsDetail": {},
+    "queryGeneralWalletBalance": {"walletType": 1},
+    "queryGeneralWalletWithdrawList": {},
+    "generalWalletDeduct": {"openId": None},
+    "talentWithdrawTax": {},
+    "wxaCode": {"grantType": "client_credential", "appid": "wxfdba1f3193621ebf"},
+    "wxUrlLink": {"grantType": "client_credential", "appid": "wxfdba1f3193621ebf"},
+    "queryDaoDianSingle": {"recallBizId": "cpsDaoZongWxSinglePoi"},
+    "queryDynamicRule": {"type": "1"},
+    "getUserRole": {},
+    "personAuth": {},
+    "getAgreementPDF": {},
+    "personSign": {},
+    "promoteProduct": {"bizLine": 40},
+    "promoteActivity": {},
+    "getTalentShareInfo": {},
+    "getTalentPromoteData": {},
+    "getMpJumpUrl": {"urlContainerList": [1]},
+    "getSubscribeTemplateIds": {"slot": "1"},
+    "queryRTBPoiInfo": {"sjActivity": "1", "mediumParams": {"poi_id_str": "1"}},
+    "getWxpDecode": {"p": "1"},
+    "getResourceConfig": {"spotIdList": [1]},
+    "getRightsMall": {},
+    "rightsExchange": {},
+    "queryRightsExchangeRecord": {},
+    "queryUnusedRightsList": {},
+    "queryDelayCashBackList": {},
+    "fetchHeatmapTaps": {},
+    "reportEvents": {},
+}
+
+# @mtfe/weapp-safety-request addCommonParams 注入位置 (constants/common.js)
+PARAMS_POS_URL = ["yodaReady", "csecappid", "csecplatform", "csecversionname", "csecversion"]
+PARAMS_POS_HEADER = ["token", "csecuuid", "csecdpid", "csecuserid",
+                     "openId", "openIdCipher", "eptoken", "csecepuid"]
+
+# safety-request defaultInitParams (constants/common.js)
+SAFETY_DEFAULT_PARAMS = {"csecversion": "1.4.0", "yodaReady": "wx", "csecplatform": 3}
+
+# openresty WAF 只放行带正常 UA 的请求; 缺 UA / python-requests 默认 UA 会被 403
+DEFAULT_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 "
+              "(KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.40(0x18002832) "
+              "NetType/WIFI Language/zh_CN miniProgram")
+
+
+def _referer(app_id: str, ver: int = 1) -> str:
+    return "https://servicewechat.com/%s/%d/page-frame.html" % (app_id, ver)
+
 
 @dataclass
 class UserState:
@@ -160,6 +237,46 @@ class UserState:
     longitude: float = 0.0
     app_version: str = "0.0.0"         # xcxVersion
     oad_params: dict = field(default_factory=dict)
+    # --- safety-request 层注入 (addCommonParams) ---
+    open_id: str | None = None         # header.openId
+    open_id_cipher: str | None = None  # header.openIdCipher
+    csec_uuid: str | None = None       # header.csecuuid (lxcuid)
+    csec_app_id: str | None = None     # url.csecappid
+    csec_version_name: str | None = None  # url.csecversionname (小程序版本)
+    csec_version: str = "1.4.0"        # url.csecversion (sdk 版本)
+    csec_platform: int = 3             # url.csecplatform (3=WX)
+    csec_dp_id: str | None = None      # header.csecdpid
+    ep_token: str | None = None        # header.eptoken
+    csec_ep_uid: str | None = None     # header.csecepuid
+    app_id: str = "wxfdba1f3193621ebf"
+
+    def safety_params(self) -> dict:
+        """合并 safety-request 层的 url/header 待注入参数。"""
+        p = dict(SAFETY_DEFAULT_PARAMS)
+        p["csecappid"] = self.csec_app_id or self.app_id
+        p["csecversion"] = self.csec_version
+        p["csecplatform"] = self.csec_platform
+        if self.csec_version_name:
+            p["csecversionname"] = self.csec_version_name
+        if self.token:
+            p["token"] = self.token
+        if self.csec_uuid:
+            p["csecuuid"] = self.csec_uuid
+        if self.user_id:
+            p["csecuserid"] = str(self.user_id)
+        if self.open_id:
+            p["openId"] = self.open_id
+        if self.open_id_cipher:
+            p["openIdCipher"] = self.open_id_cipher
+        if self.csec_dp_id:
+            p["csecdpid"] = self.csec_dp_id
+        if self.ep_token:
+            p["eptoken"] = self.ep_token
+        if self.csec_ep_uid:
+            p["csecepuid"] = self.csec_ep_uid
+        return p
+
+    user_id: str | None = None         # header.csecuserid
 
 
 class FanfanClient:
@@ -188,14 +305,28 @@ class FanfanClient:
         return d
 
     def request(self, api: str, data: dict | None = None, method: str | None = None,
-                raw_path: str | None = None) -> dict:
+                raw_path: str | None = None, apply_safety: bool = True) -> dict:
         key = FRONTEND_FN.get(api, api)
         path = raw_path if raw_path is not None else API_URL.get(key, api)
         url = self.base_url + path
         if method is None:
             method = "GET" if key in GET_APIS else "POST"
-        header = {"content-type": "application/json"}
+        header = {
+            "content-type": "application/json",
+            "User-Agent": DEFAULT_UA,
+            "Referer": _referer(self.user.app_id),
+        }
         body = self._apply_interceptors(method, path, data, header)
+        # @mtfe/weapp-safety-request addCommonParams: url query + header 注入
+        if apply_safety:
+            sp = self.user.safety_params()
+            from urllib.parse import urlencode
+            q = [(k, sp[k]) for k in PARAMS_POS_URL if sp.get(k) is not None]
+            if q:
+                url = url + ("&" if "?" in url else "?") + urlencode(q)
+            for k in PARAMS_POS_HEADER:
+                if sp.get(k) is not None:
+                    header.setdefault(k, sp[k])
         signed = self.signer.sign(method, url, body, header)
         if signed["method"] == "GET":
             resp = self.http.request("GET", signed["url"], headers=signed["header"],
