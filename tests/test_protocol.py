@@ -232,6 +232,55 @@ def test_sign_up_helper():
     check("sign_up 打 mission/open", seen["body"].get("missionSecretId") == "EID")
 
 
+def test_lock_renew_helper():
+    """锁单续期: cancel_mission 必带 wxp; renew_lock 走 取消->重报, umsid 刷新。"""
+    from meituan_fanfan.api import FanfanClient, UserState
+
+    cli = FanfanClient(user=UserState(token="T"))
+    state = {"status": "SIGN_NO_ORDER", "umsid": "OLD", "n": 0, "cancel_body": None}
+
+    class _Resp:
+        def __init__(self, payload):
+            self._p = payload
+        def json(self):
+            return self._p
+
+    class _Http:
+        def request(self, method, url, headers=None, data=None, params=None):
+            body = json.loads(data.decode()) if data else {}
+            if "queryPoiByRecallBiz" in url:
+                return _Resp({"ret": 0, "infos": [{
+                    "poiBaseInfo": {"name": "三米粥铺"},
+                    "planActivityInfoList": [{"poiEventId": "EID", "pvid": "PV",
+                                              "userSignStatus": state["status"],
+                                              "userMissionSecretId": state["umsid"]}]}]})
+            if "mission/cancel" in url:
+                state["cancel_body"] = body
+                state["status"] = "CAN_SIGN"
+                state["umsid"] = ""
+                return _Resp({"ret": 0, "msg": "成功"})
+            if "mission/open" in url:
+                state["status"] = "SIGN_NO_ORDER"
+                state["n"] += 1
+                state["umsid"] = "NEW%d" % state["n"]
+                return _Resp({"ret": 0, "msg": "成功"})
+            return _Resp({"ret": 0})
+
+    cli.http = _Http()
+    r = cli.cancel_mission("OLD")
+    check("cancel_mission ret=0", r.get("ret") == 0)
+    check("cancel_mission 必带 wxp", bool(state["cancel_body"].get("wxp")))
+
+    state.update({"status": "SIGN_NO_ORDER", "umsid": "OLD", "n": 0})
+    res = cli.renew_lock("三米粥铺")
+    check("renew_lock ok", res.get("ok") is True)
+    check("renew_lock action=renew", res.get("action") == "renew")
+    check("renew_lock umsid 刷新", res.get("old_umsid") == "OLD" and res.get("new_umsid") == "NEW1")
+
+    # 未找到店铺
+    check("renew_lock not_found", cli.renew_lock("不存在店").get("action") == "not_found")
+
+
 if __name__ == "__main__":
     test_vm()
     test_mtgsig()
@@ -243,6 +292,7 @@ if __name__ == "__main__":
     test_login_branches()
     test_sign_in_helper()
     test_sign_up_helper()
+    test_lock_renew_helper()
     print("\n==== %d PASS / %d FAIL ====" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", FAIL)

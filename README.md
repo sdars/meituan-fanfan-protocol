@@ -25,6 +25,7 @@ examples/
   full_chain.py         全链路闭合 (YYB 铸码 -> 登录 -> 业务接口)
   sign_in.py            签到链路 (fetchActivityList(CHECK_IN) -> check/in, 必须 prod 域)
   sign_up.py            店铺报名链路 (queryPoiByRecallBiz -> mission/open, st 域 + 必带 wxp)
+  lock_keeper.py        锁单守护 (取消->重报续期, 复位 30 分钟下单窗口)
   diagnose_account.py   账号诊断 (YYB 会话 rt/at/scope + 美团 appid 铸码能力)
 docs/
   接口文档.md / 算法原理.md
@@ -79,3 +80,7 @@ cd /root/YYB/meituan-fanfan
   `WXP_BACK_UP`), 否则后端 `ret:10 必要参数为空`; 带上后进入真实逻辑, 实测
   三米粥铺等可返回 `ret:0 成功`, 复查 `fetchMissionList` 出现 `IN_PROGRESS` 新记录。
   详见 [`docs/接口文档.md`](docs/接口文档.md) §5, 示例 `examples/sign_up.py`。
+- **锁单续期实测**: 报名后进入 `SIGN_NO_ORDER`, 后端给 **30 分钟**下单窗口
+  (`orderLimitTime` 秒)。只要未下单, 就能「`cancelMission` -> 立即 `signUpTask`」
+  复位窗口 (每次重报产生新 `userMissionSecretId`)。取消接口同样**必带 `wxp`**。
+  详见 [`docs/接口文档.md`](docs/接口文档.md) §6, 守护脚本 `examples/lock_keeper.py`。

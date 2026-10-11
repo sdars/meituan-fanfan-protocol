@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -414,3 +415,68 @@ class FanfanClient:
                 "appContainer": "WEI_XIN_APP", "os": "ANDROID",
                 "pagePvId": pvid, "riskParams": {}}
         return self.request("signUpTask", data=body)
+
+    def cancel_mission(self, user_mission_secret_id: str, wxp: str = WXP_PROD) -> dict:
+        """取消报名 (对应 poi-card 的 fetchCancelMission)。
+
+        **必须带 wxp**: 缺 wxp 时后端返回 ret:10 (必要参数为空)。
+        user_mission_secret_id 来自 poi 的 planActivityInfoList[].userMissionSecretId
+        (userSignStatus in {SIGN_NO_ORDER, SIGN_AND_ORDER} 时才有值)。
+        """
+        return self.request("cancelMission",
+                            data={"userMissionSecretId": user_mission_secret_id, "wxp": wxp})
+
+    def find_poi(self, name_keyword: str, recall_biz_id: str = "cpsPromotionOrderMulti",
+                 sj_activity: str = "ssxm4") -> tuple:
+        """按店铺名关键字在可报名列表里定位 (poi, activity)。
+
+        返回 (poi_dict, activity_dict); 未命中返回 (None, None)。
+        activity_dict 含 poiEventId / pvid / userSignStatus / userMissionSecretId。
+        """
+        for p in self.fetch_signable_pois(recall_biz_id=recall_biz_id, sj_activity=sj_activity):
+            if name_keyword in (p.get("poiBaseInfo") or {}).get("name", ""):
+                for a in (p.get("planActivityInfoList") or []):
+                    return p, a
+        return None, None
+
+    def renew_lock(self, name_keyword: str, sj_activity: str = "ssxm4",
+                   wxp: str = WXP_PROD) -> dict:
+        """续期锁单: 对指定店铺执行「取消当前报名 -> 立即重新报名」,
+        使 30 分钟下单窗口 (orderLimitTime) 复位。
+
+        返回 {ok, action, ret, msg, old_umsid, new_umsid}。
+        action ∈ {fresh_sign, renew, already_no_order, not_found, fail}。
+
+        注意: 仅在已有报名 (SIGN_NO_ORDER) 且**尚未下单**时才能续期;
+        一旦下单, 取消接口会失败, 续期自然失效。
+        """
+        p, a = self.find_poi(name_keyword, sj_activity=sj_activity)
+        if not p:
+            return {"ok": False, "action": "not_found", "msg": "未找到店铺: %s" % name_keyword}
+        status = a.get("userSignStatus")
+        old = a.get("userMissionSecretId")
+
+        # 已有报名: 先取消
+        if status in ("SIGN_NO_ORDER", "SIGN_AND_ORDER") and old:
+            r = self.cancel_mission(old, wxp=wxp)
+            if r.get("ret") != 0:
+                return {"ok": False, "action": "fail", "ret": r.get("ret"),
+                        "msg": "取消失败(可能已下单): %s" % r.get("msg"), "old_umsid": old}
+            # 重新拉状态
+            p, a = self.find_poi(name_keyword, sj_activity=sj_activity)
+            if not p or a.get("userSignStatus") != "CAN_SIGN":
+                return {"ok": False, "action": "fail", "msg": "取消后未能回到 CAN_SIGN", "old_umsid": old}
+            action = "renew"
+        elif status == "CAN_SIGN":
+            action = "fresh_sign"
+        else:
+            return {"ok": False, "action": "fail", "msg": "当前状态不可报名: %s" % status}
+
+        r = self.sign_up(a["poiEventId"], a["pvid"], sj_activity=sj_activity, wxp=wxp)
+        if r.get("ret") != 0:
+            return {"ok": False, "action": "fail", "ret": r.get("ret"),
+                    "msg": "报名失败: %s" % r.get("msg"), "old_umsid": old}
+        time.sleep(1.5)
+        _, a2 = self.find_poi(name_keyword, sj_activity=sj_activity)
+        return {"ok": True, "action": action, "ret": 0, "msg": "成功",
+                "old_umsid": old, "new_umsid": a2.get("userMissionSecretId")}
