@@ -13,6 +13,11 @@
 > 两条路径的**共同前提**是 pcyyb 账号登录态具备 `snsapi_runtime_pcsdk` scope
 > （扫码登录时授予）。scope 缺失时 `authorize_buffer` 返回
 > `-101 GetLoginBuffer error [40188] [invalid scope]`（见 §7）。
+>
+> **2026-10-11 端到端实测结论**：重新扫码恢复 scope 后，**MMTLS 原生 code 路径
+> 已全链路闭合** —— `getWxIds` 返回真实 openId/unionId，`silentLogin` 返回真实
+> token + userId（见 §7.4）。故「返返能否走 YYB 打通登录」的答案是：
+> **能（走 MMTLS 原生 code 路径，非 login_code 路径）**。
 
 ## 1. 设想的链路
 
@@ -148,7 +153,37 @@ pcyyb SessionStore.load(account)      # 扫码登录态 (unionid/at/guid)
 - `examples/login_via_yyb.py`：YYB 铸码 → getWxIds → silentLogin → getMtInfo。
 - `examples/probe_login.py`：风控对照探测（打印真实 HTTP 状态）。
 
-### 7.4 与美团外卖的对称性
+### 7.4 端到端实测（2026-10-11，重新扫码恢复 scope 后）
+
+扫码登录（`scope=snsapi_login,snsapi_runtime_pcsdk`）后 `authorize_buffer` 恢复：
+
+```
+buffer OK len=296  {token:1_BgAA..., app:ilinkapp_060000b7b93f6c, appid:wxd44977328b36e647}
+```
+
+用该 buffer 为返返 appid 铸码 → 喂美团，**全链路闭合**：
+
+| 步骤 | 结果 |
+|---|---|
+| `getNativeWxLoginCode(buf, wxfdba1f3193621ebf)` | ✅ 铸出原生 code（如 `0a3WGrll...`） |
+| `getWxIds(code)` | ✅ HTTP 200，`openId=oReMh7eJLnDZ7M0y-kwhWfte1FqE` / `unionId=oNQu9t2VIrizO07W_ENbjX1-0teU` |
+| `silent_login(code2, fp)` | ✅ HTTP 200，**真实 `token` + `userId=2665956845`** |
+| `get_mt_info()` | ✅ 真实资料 `{id:2665956845, username:梦璃1944, mobile:198****5852}` |
+
+**关键发现（指纹长度 vs 风控）**：
+
+| wechatFingerprint | 长度 | 结果 |
+|---|---|---|
+| 短占位 `WX__ver1.2.0_TEST` | 17B | ✅ HTTP 200，返回 token |
+| 纯 Python 生成器 `finger.g()` 全量 | 254B | ❌ HTTP 403（openresty WAF 拦请求体） |
+
+即：**MMTLS 铸码路径让 `getWxIds` 完全打通，`silentLogin` 也能返回真实 token**；
+但**长指纹会被 WAF 直接 403**，短指纹可过（与外卖一致：外卖首次用短指纹拿到 token，
+后续连续调用触发 `101144 user_has_risk` 行为风控）。
+
+> 复现：`work/逆向分析/2026-10-11/yyb_meituan/fanfan_full.py`。
+
+### 7.5 与美团外卖的对称性
 
 同一套 MMTLS 铸码逻辑已在**美团外卖**（`wx2c348cf579062e56`）实测：
 `getWxIds` 稳定成功（HTTP 200，拿到 openId/unionId），`silentLogin` 首次返回
