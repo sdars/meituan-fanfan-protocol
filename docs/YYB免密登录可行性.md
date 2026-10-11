@@ -134,17 +134,41 @@ pcyyb SessionStore.load(account)      # 扫码登录态 (unionid/at/guid)
 > 关键：`pcyyb.authorize_code()` 返回的 `login_code` **不是** `wx.login` code，
 > 喂美团会得 `101172 weapp_invalid_session`。必须走 MMTLS 铸码。
 
-### 7.2 前提：`snsapi_runtime_pcsdk` scope 必须在线
+### 7.2 前提：`snsapi_runtime_pcsdk` scope 必须在线（含掉 scope 根因）
 
 `authorize_buffer` 依赖登录态里的 **runtime scope**。扫码登录时
 `open.weixin.qq.com/connect/qrconnect` 的 `scope=snsapi_login,snsapi_runtime_pcsdk`
-会授予它；一旦 scope 失效（如刷新/长时间闲置），`authorize_buffer` 返回：
+会授予它；一旦 scope 缺失，`authorize_buffer` 返回：
 
 ```
 {"code":-101,"msg":"GetLoginBuffer error [40188] [invalid scope, rid: ...]"}
 ```
 
 此时**两种 code 路径都不可用**，必须**重新扫码登录**恢复 scope。
+
+**为什么会掉 scope（2026-10-11 实测 + 反编译交叉验证）**：
+
+`snsapi_runtime_pcsdk` 不是 access_token 的固有属性，而是**扫码授权那一刻按 `scope=`
+参数授予、记录在微信侧 `(appid, openid)` 维度**的授权集合。当该微信号在**其它入口**
+（真机微信 / 另一个应用宝实例）以**更弱的 scope**（仅 `snsapi_login`）重新授权同一个
+`appid=wxd44977328b36e647` 时，微信侧该 `(appid, openid)` 的 scope 快照被**覆盖**，
+于是我们持有的 AT 虽然仍然有效（`api.weixin.qq.com/sns/userinfo` 正常返回），
+`authorize_buffer` 却报 `40188 invalid scope`。
+
+两种失效码要分清：
+
+| code / msg | 含义 | 恢复方式 |
+|---|---|---|
+| `-101 [40188 invalid scope]` | AT **有效**，但 granted scope 不含 `snsapi_runtime_pcsdk` | 重新扫码 |
+| `-101 [40001 invalid credential, ... not latest]` | AT **本身失效/被顶替** | 重新扫码 |
+
+**refresh / check_login 不能恢复**：它们只**延续** AT（微信侧 `sns/oauth2/refresh_token`
+实测返回的是**同一个** AT，`scope` 字段仍是 `snsapi_login,snsapi_runtime_pcsdk`），
+并不重新走授权流程，因此无法重建被覆盖的 scope 快照。**唯一恢复手段是重新扫码登录**。
+
+> 排除实验（同一可用登录态，实测均**不掉** scope，`authorize_buffer` 始终 OK）：
+> `refresh(v1 pc_yyb)`、`refresh(v3 pc_yyb_auth)`、`check_login`、MMTLS 多次铸码、
+> `[A] authorize_code`（含白名单/非白名单 appid）。故「refresh 丢 scope」的旧假设**不成立**。
 
 ### 7.3 本项目封装
 
@@ -180,6 +204,10 @@ buffer OK len=296  {token:1_BgAA..., app:ilinkapp_060000b7b93f6c, appid:wxd44977
 即：**MMTLS 铸码路径让 `getWxIds` 完全打通，`silentLogin` 也能返回真实 token**；
 但**长指纹会被 WAF 直接 403**，短指纹可过（与外卖一致：外卖首次用短指纹拿到 token，
 后续连续调用触发 `101144 user_has_risk` 行为风控）。
+
+> **外卖侧对称实测（2026-10-11）**：`weappsilentlogin` 与 `weappsilentloginembedded`
+> **两个分支**行为一致——短指纹(17B) 均 HTTP 200 返回 token；随机 base64(240B) /
+> 生成器全量(254B) 均 HTTP 403。详见 `meituan-waimai/docs/登录链路与风控.md` §3.1。
 
 > 复现：`work/逆向分析/2026-10-11/yyb_meituan/fanfan_full.py`。
 
