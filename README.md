@@ -22,6 +22,8 @@ tests/
 examples/
   login_flow.py / login_via_yyb.py / probe_login.py / business_api.py
   probe_all_apis.py     全量业务接口探测 (60 个前端函数, 支持 prod/staging 域)
+  full_chain.py         全链路闭合 (YYB 铸码 -> 登录 -> 业务接口)
+  sign_in.py            签到链路 (fetchActivityList(CHECK_IN) -> check/in, 必须 prod 域)
   diagnose_account.py   账号诊断 (YYB 会话 rt/at/scope + 美团 appid 铸码能力)
 docs/
   接口文档.md / 算法原理.md
@@ -64,3 +66,9 @@ cd /root/YYB/meituan-fanfan
 - `code`（wx.login 返回值）是唯一需要真实微信环境的外部输入。
 - `wechatFingerprint` 由 `finger.g()` 纯 Python 生成。
 - 逆向分析原始产物见 `/root/YYB/work/逆向分析/2026-10-11/meituan_fanfan/`。
+- **签到闭环实测**: 签到 = `fetchActivityList(['CHECK_IN'])` 取 `missionSecretId`
+  + 可签到的 `day`, 再 `fetchSignInInfo(missionSecretId, day)` 打
+  `/wmpact/mission/check/in`。**必须用 prod 域** `offsiteact.meituan.com`
+  (staging 域返回的 `missionSecretId` 无效, check/in 会 ret 99)。实测
+  prod 域 `ret:0` 成功发放 100 积分, 复查 `isTodayCheckedIn=true`。详见
+  [`docs/接口文档.md`](docs/接口文档.md) §4, 示例 `examples/sign_in.py`。

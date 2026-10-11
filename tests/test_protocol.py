@@ -158,6 +158,46 @@ def test_login_branches():
     check("net_check 走 embedded", seen.get("path") == PATHS["newwxsilentlogin"])
 
 
+def test_sign_in_helper():
+    """签到链路: fetch_check_in 解析 data.checkIn; sign_in 自动取 id/day 打 check/in。"""
+    from meituan_fanfan.api import FanfanClient, UserState
+
+    cli = FanfanClient(user=UserState(token="T"))
+    calls = {}
+
+    class _Resp:
+        def __init__(self, payload):
+            self._p = payload
+        def json(self):
+            return self._p
+
+    class _Http:
+        def __init__(self, outer):
+            self.outer = outer
+        def request(self, method, url, headers=None, data=None, params=None):
+            if "activity/list" in url:
+                return _Resp({"ret": 0, "data": {"checkIn": {
+                    "missionSecretId": "SID", "isTodayCheckedIn": False, "daysCheckedIn": 0,
+                    "checkInList": [
+                        {"day": 1, "isCanCheckIn": True},
+                        {"day": 2, "isCanCheckIn": False}]}}})
+            return _Resp({"ret": 0, "data": {"awardType": "POINTS", "awardValue": 100}})
+
+    cli.http = _Http(calls)
+    ci = cli.fetch_check_in()
+    check("fetch_check_in 解析 missionSecretId", ci.get("missionSecretId") == "SID")
+    res = cli.sign_in()
+    check("sign_in ret=0", res.get("ret") == 0)
+    check("sign_in award=100", (res.get("data") or {}).get("awardValue") == 100)
+
+    # 无 isCanCheckIn 时返回 -1, 不打 check/in
+    class _Http2(_Http):
+        def request(self, *a, **k):
+            return _Resp({"ret": 0, "data": {"checkIn": {"missionSecretId": "S", "checkInList": []}}})
+    cli.http = _Http2({})
+    check("sign_in 无可签 day 返回 -1", cli.sign_in().get("ret") == -1)
+
+
 if __name__ == "__main__":
     test_vm()
     test_mtgsig()
@@ -167,6 +207,7 @@ if __name__ == "__main__":
     test_signer_end_to_end()
     test_wechat_fingerprint_shape()
     test_login_branches()
+    test_sign_in_helper()
     print("\n==== %d PASS / %d FAIL ====" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", FAIL)

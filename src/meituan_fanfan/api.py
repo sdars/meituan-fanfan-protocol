@@ -172,6 +172,8 @@ DEFAULT_PARAMS = {
     "queryShare": {"teamId": "1"},
     "joinShare": {"teamId": "1"},
     "openShare": {"activityId": "1", "userId": "1"},
+    # 注意: missionSecretId 必须来自 prod 域 fetchActivityList(['CHECK_IN']) 的
+    # data.checkIn.missionSecretId (st 域的 id 在 prod 域无效); 用 FanfanClient.sign_in() 自动取。
     "signIn": {"day": 1, "missionSecretId": "1"},
     "pointsBalance": {},
     "shareList": {},
@@ -349,3 +351,30 @@ class FanfanClient:
                 return self.request(name, data=data, **kw)
             return _call
         raise AttributeError(name)
+
+    # --- 签到链路 (fetchActivityList(CHECK_IN) -> fetchSignInInfo) --------------
+    def fetch_check_in(self) -> dict:
+        """取签到面板: data.checkIn = {missionSecretId, isTodayCheckedIn,
+        daysCheckedIn, checkInList[...]}。对应页面 onLoad 的
+        fetchActivityList([QUERY_MODEL.CHECK_IN])。"""
+        r = self.request("fetchActivityList", data={"queryModel": ["CHECK_IN"]})
+        return ((r.get("data") or {}).get("checkIn") or {}) if isinstance(r, dict) else {}
+
+    def sign_in(self, mission_secret_id: str | None = None, day: int | None = None) -> dict:
+        """自动签到: 缺省先从 fetchActivityList 取 missionSecretId 与可签到的 day。
+
+        **必须用 prod 域** (BASE_URL): st 域返回的 missionSecretId 在 prod 域无效,
+        直接用 st 域打 check/in 会返回 ret 99 (签到失败)。
+        """
+        if mission_secret_id is None or day is None:
+            ci = self.fetch_check_in()
+            mission_secret_id = mission_secret_id or ci.get("missionSecretId")
+            if day is None:
+                for it in (ci.get("checkInList") or []):
+                    if it.get("isCanCheckIn"):
+                        day = it.get("day")
+                        break
+        if day is None:
+            return {"ret": -1, "msg": "无可签到 day (今日已签或未到签到时间)"}
+        return self.request("fetchSignInInfo",
+                            data={"day": day, "missionSecretId": mission_secret_id})
