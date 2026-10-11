@@ -12,12 +12,15 @@ AppID: wxfdba1f3193621ebf
 """
 from .signer import Signer, build_w
 from .api import FanfanClient, UserState, API_URL, FRONTEND_FN, BASE_URL
-from .login import LoginClient, LoginConfig
+from .login import LoginClient, LoginConfig, LoginError
+from .yyb_code import (get_wx_login_code, try_get_wx_login_code,
+                       YybUnavailable, DEFAULT_APP_ID)
 
 __all__ = [
     "Signer", "build_w",
     "FanfanClient", "UserState", "API_URL", "FRONTEND_FN", "BASE_URL",
-    "LoginClient", "LoginConfig",
+    "LoginClient", "LoginConfig", "LoginError",
+    "get_wx_login_code", "try_get_wx_login_code", "YybUnavailable", "DEFAULT_APP_ID",
 ]
 
 __version__ = "1.0.0"

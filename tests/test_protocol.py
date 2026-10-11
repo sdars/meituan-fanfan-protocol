@@ -114,6 +114,50 @@ def test_wechat_fingerprint_shape():
           and "gyro" not in obj["system"] and obj["localid"] == "dfp123")
 
 
+def test_login_branches():
+    """登录链路补分支: LoginError / net_check path / build_wechat_fingerprint。"""
+    from meituan_fanfan import LoginClient, LoginConfig, LoginError
+    from meituan_fanfan.login import PATHS
+    c = LoginClient(cfg=LoginConfig())
+    check("newwxsilentlogin path",
+          PATHS["newwxsilentlogin"] == "/user/v1/weappsilentloginembedded")
+    # LoginError 结构化属性
+    e = LoginError("boom", {"error": {"code": 101144, "type": "user_has_risk"}})
+    check("LoginError.code/type", e.code == 101144 and e.type == "user_has_risk")
+    # build_wechat_fingerprint 纯 Python 生成, 前缀固定
+    fp = c.build_wechat_fingerprint()
+    check("build_wechat_fingerprint 前缀",
+          fp.startswith(_finger.WECHAT_FP_PREFIX) and len(fp) > 60)
+    # get_wx_ids 失败时抛 LoginError (非 RuntimeError) —— 离线打桩, 不打网络
+    c._re_form = lambda *a, **k: {"error": {"code": 101172, "type": "weapp_invalid_session"}}
+    raised = None
+    try:
+        c.get_wx_ids("fake")
+    except Exception as ex:  # noqa: BLE001
+        raised = ex
+    check("get_wx_ids 失败抛 LoginError", isinstance(raised, LoginError))
+
+    # silent_login 业务错误 (101144 风控) 抛 LoginError 并带 code/type
+    c2 = LoginClient(cfg=LoginConfig())
+    c2._re_form = lambda *a, **k: {"error": {"code": 101144, "type": "user_has_risk"}}
+    raised2 = None
+    try:
+        c2.silent_login("fake", "fp")
+    except LoginError as ex:
+        raised2 = ex
+    check("silent_login 风控抛 LoginError",
+          raised2 is not None and raised2.code == 101144 and raised2.type == "user_has_risk")
+
+    # net_check=True 走 embedded path (打桩记录 path)
+    seen = {}
+    def fake_form(path, data, method="POST"):
+        seen["path"] = path
+        return {"openId": "o", "unionId": "u", "data": {"token": "t", "userId": 1}}
+    c2._re_form = fake_form
+    c2.silent_login("code", "fp", net_check=True)
+    check("net_check 走 embedded", seen.get("path") == PATHS["newwxsilentlogin"])
+
+
 if __name__ == "__main__":
     test_vm()
     test_mtgsig()
@@ -122,6 +166,7 @@ if __name__ == "__main__":
     test_build_w()
     test_signer_end_to_end()
     test_wechat_fingerprint_shape()
+    test_login_branches()
     print("\n==== %d PASS / %d FAIL ====" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", FAIL)
