@@ -23,6 +23,10 @@ BASE_URL = "https://offsiteact.meituan.com"
 TEST_BASE_URL = "https://offsiteact.waimai.test.sankuai.com"
 STAGING_BASE_URL = "https://offsiteact.st.meituan.com"
 
+# 活动定位参数 wxp (constants.js WXP_BACK_UP): 报名等写接口必填, 否则 ret:10
+WXP_PROD = "1a112a20b52140e0a93f77b593ab275d"
+WXP_STAGING = "1a112a20b52140e0a93f77b593ab275d"
+
 # api/index.js exports.API_URL (与前端函数一一对应)
 API_URL = {
     "getStructConfig": "/wmpact/ge/getPageModuleInfo",
@@ -378,3 +382,35 @@ class FanfanClient:
             return {"ret": -1, "msg": "无可签到 day (今日已签或未到签到时间)"}
         return self.request("fetchSignInInfo",
                             data={"day": day, "missionSecretId": mission_secret_id})
+
+    # --- 店铺报名链路 (fetchPoiListCashback -> fetchSignUpTask) -----------------
+    def fetch_signable_pois(self, recall_biz_id: str = "cpsPromotionOrderMulti",
+                            page_size: int = 20, sj_activity: str = "ssxm4") -> list:
+        """取可报名店铺列表 (对应首页 fetchPoiListCashback)。
+
+        **必须用 st 域**: prod 域 fetchPoiList 会返回 noRecallPoiReason=3 (空);
+        且必须带真实经纬度 (lat/lon), 否则同样召回为空。
+        返回 data.infos 列表, 每个元素含 planActivityInfoList[]。
+        """
+        r = self.request("fetchPoiList", data={
+            "recallBizId": recall_biz_id, "pageNo": 1, "pageSize": page_size,
+            "sjActivity": sj_activity})
+        return (r.get("infos") or []) if isinstance(r, dict) else []
+
+    def sign_up(self, poi_event_id: str, pvid: str,
+                sj_activity: str = "ssxm4", wxp: str = WXP_PROD) -> dict:
+        """店铺报名 (对应 poi-card 的 fetchSignUpTask)。
+
+        参数来自 fetch_signable_pois(): 取 planActivityInfoList[i] 中
+        userSignStatus=='CAN_SIGN' 的 poiEventId (==missionSecretId) 与 pvid。
+
+        **必须带 wxp**: 缺 wxp 时后端返回 ret:10 (必要参数为空), 带上后才进入
+        真实报名逻辑 (ret:0 成功 / 204 抢光 / 209 频繁)。channelType 固定 'SELF'。
+
+        返回: ret==0 报名成功; 204 名额抢光; 209 操作过于频繁。
+        """
+        body = {"missionSecretId": poi_event_id, "channelType": "SELF",
+                "pvid": pvid, "sjActivity": sj_activity, "wxp": wxp,
+                "appContainer": "WEI_XIN_APP", "os": "ANDROID",
+                "pagePvId": pvid, "riskParams": {}}
+        return self.request("signUpTask", data=body)

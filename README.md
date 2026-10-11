@@ -17,13 +17,14 @@ src/meituan_fanfan/
   login.py       登录链路 (getWxIds / silentLogin / getMtInfo)
   api.py         业务接口客户端 (offsiteact /wmpact/*)
 tests/
-  test_protocol.py   黄金向量逐字节比对 (14 项)
+  test_protocol.py   黄金向量逐字节比对 (29 项)
   fixtures/          golden.json / deep.json / vmcap.json / dfp.json
 examples/
   login_flow.py / login_via_yyb.py / probe_login.py / business_api.py
   probe_all_apis.py     全量业务接口探测 (60 个前端函数, 支持 prod/staging 域)
   full_chain.py         全链路闭合 (YYB 铸码 -> 登录 -> 业务接口)
   sign_in.py            签到链路 (fetchActivityList(CHECK_IN) -> check/in, 必须 prod 域)
+  sign_up.py            店铺报名链路 (queryPoiByRecallBiz -> mission/open, st 域 + 必带 wxp)
   diagnose_account.py   账号诊断 (YYB 会话 rt/at/scope + 美团 appid 铸码能力)
 docs/
   接口文档.md / 算法原理.md
@@ -72,3 +73,9 @@ cd /root/YYB/meituan-fanfan
   (staging 域返回的 `missionSecretId` 无效, check/in 会 ret 99)。实测
   prod 域 `ret:0` 成功发放 100 积分, 复查 `isTodayCheckedIn=true`。详见
   [`docs/接口文档.md`](docs/接口文档.md) §4, 示例 `examples/sign_in.py`。
+- **店铺报名闭环实测**: 报名 = `fetchPoiList`(st 域 + 真实经纬度) 取店铺
+  `planActivityInfoList[].{poiEventId,pvid}` (userSignStatus=`CAN_SIGN`),
+  再 `fetchSignUpTask` 打 `/wmpact/mission/open`。**报名必带 `wxp`** (constants.js
+  `WXP_BACK_UP`), 否则后端 `ret:10 必要参数为空`; 带上后进入真实逻辑, 实测
+  三米粥铺等可返回 `ret:0 成功`, 复查 `fetchMissionList` 出现 `IN_PROGRESS` 新记录。
+  详见 [`docs/接口文档.md`](docs/接口文档.md) §5, 示例 `examples/sign_up.py`。

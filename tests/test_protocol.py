@@ -198,6 +198,40 @@ def test_sign_in_helper():
     check("sign_in 无可签 day 返回 -1", cli.sign_in().get("ret") == -1)
 
 
+def test_sign_up_helper():
+    """报名链路: fetch_signable_pois 解析 infos; sign_up 必带 wxp 打 mission/open。"""
+    from meituan_fanfan.api import FanfanClient, UserState
+
+    cli = FanfanClient(user=UserState(token="T"))
+    seen = {}
+
+    class _Resp:
+        def __init__(self, payload):
+            self._p = payload
+        def json(self):
+            return self._p
+
+    class _Http:
+        def request(self, method, url, headers=None, data=None, params=None):
+            body = json.loads(data.decode()) if data else {}
+            if "queryPoiByRecallBiz" in url:
+                return _Resp({"ret": 0, "infos": [{
+                    "poiBaseInfo": {"name": "三米粥铺(滨江浦沿店)"},
+                    "planActivityInfoList": [
+                        {"poiEventId": "EID", "pvid": "PV", "userSignStatus": "CAN_SIGN"}]}]})
+            seen["body"] = body
+            return _Resp({"ret": 0, "msg": "成功"})
+
+    cli.http = _Http()
+    pois = cli.fetch_signable_pois()
+    check("fetch_signable_pois 解析 infos", len(pois) == 1 and pois[0]["planActivityInfoList"][0]["poiEventId"] == "EID")
+    res = cli.sign_up("EID", "PV")
+    check("sign_up ret=0", res.get("ret") == 0)
+    check("sign_up 必带 wxp", bool(seen["body"].get("wxp")))
+    check("sign_up channelType=SELF", seen["body"].get("channelType") == "SELF")
+    check("sign_up 打 mission/open", seen["body"].get("missionSecretId") == "EID")
+
+
 if __name__ == "__main__":
     test_vm()
     test_mtgsig()
@@ -208,6 +242,7 @@ if __name__ == "__main__":
     test_wechat_fingerprint_shape()
     test_login_branches()
     test_sign_in_helper()
+    test_sign_up_helper()
     print("\n==== %d PASS / %d FAIL ====" % (len(PASS), len(FAIL)))
     if FAIL:
         print("FAILED:", FAIL)
