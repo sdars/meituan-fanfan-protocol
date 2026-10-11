@@ -64,3 +64,28 @@ login_code  ──►  美团 getweappuserinfo(code)  ──►  openId/unionId 
 - 其他持有美团返返 appid 授权、可签发该 appid code 的合规渠道（暂无）。
 
 > 复现探针：`work/逆向分析/2026-10-11/yyb_meituan/probe_feed_code.py`
+
+## 6. 补充：YYB 登录态本身就是一个微信开放平台授权态
+
+用 `refresh_token` 刷新出新鲜 `access_token` 后，直接打微信开放平台接口：
+
+```
+GET https://api.weixin.qq.com/sns/userinfo?access_token=<YYB at>&openid=<YYB open_id>
+-> {"openid":"owNAX6txE4vcGLryGW-ptHb5JrcY","nickname":"...",
+    "headimgurl":"https://thirdwx.qlogo.cn/...",
+    "unionid":"oTOwy6QWDRrpteehjeRYPXyOoVUs"}
+```
+
+即：**应用宝登录本身就是微信扫码 OAuth**（`open.weixin.qq.com/connect/qrconnect`，
+appid=`wxd44977328b36e647`，scope=`snsapi_login,snsapi_runtime_pcsdk`），
+YYB 持有的 `access_token` 是**微信开放平台的合法 sns token**，
+`open_id` 是该 appid 下的 openid，`unionid` 全局唯一。
+
+但这**不能反向授权第三方小程序**：
+
+- 该微信态绑定的开放平台 appid 是应用宝自己的 `wxd44977328b36e647`，
+  openid/unionid 都是「在该 appid 下」的身份；
+- 授权小程序用的是另一套接口（`pcyyb_get_wx_login_code`），只对白名单 appid
+  签发，美团返返 `-109`（见 §2）。
+
+方向性：**微信 → 应用宝** 是成立的（登录）；**应用宝 → 美团返返** 不成立（授权）。
